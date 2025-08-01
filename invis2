@@ -1,0 +1,181 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local Player = Players.LocalPlayer
+local RealCharacter = Player.Character or Player.CharacterAdded:Wait()
+
+local IsInvisible = false
+local CanToggle = true
+local FakeCharacter
+local OriginalPosition
+local AntiKickConnection
+local OriginalCameraSubject
+
+local function CloneCharacter()
+    RealCharacter.Archivable = true
+    local clone = RealCharacter:Clone()
+    clone.Name = "InvisClone"
+
+    for _, descendant in ipairs(clone:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            descendant.Transparency = 0.5
+            descendant.CanCollide = false
+        elseif descendant:IsA("LocalScript") then
+            descendant.Disabled = true
+        elseif descendant:IsA("Accessory") then
+            local handle = descendant:FindFirstChild("Handle")
+            if handle then
+                handle.Transparency = 0.5
+                handle.CanCollide = false
+            end
+        elseif descendant:IsA("Decal") or descendant:IsA("Texture") then
+            descendant.Transparency = 0.5
+        end
+    end
+
+    clone.Parent = workspace
+    return clone
+end
+
+local function MovePlayerHigh()
+    if RealCharacter and RealCharacter:FindFirstChild("HumanoidRootPart") then
+        RealCharacter.HumanoidRootPart.CFrame = CFrame.new(0, 9999, 0)
+        
+        task.wait(0.1)
+        
+        local bodyGyro = Instance.new("BodyGyro")
+        bodyGyro.MaxTorque = Vector3.new(4000, 4000, 4000)
+        bodyGyro.CFrame = CFrame.new()
+        bodyGyro.Parent = RealCharacter.HumanoidRootPart
+        
+        RealCharacter.HumanoidRootPart.Anchored = true
+        
+        if RealCharacter:FindFirstChild("Humanoid") then
+            RealCharacter.Humanoid.PlatformStand = true
+            RealCharacter.Humanoid.WalkSpeed = 0
+            RealCharacter.Humanoid.JumpPower = 0
+        end
+    end
+end
+
+local function RestorePlayerMovement()
+    if RealCharacter and RealCharacter:FindFirstChild("Humanoid") then
+        RealCharacter.Humanoid.PlatformStand = false
+        RealCharacter.Humanoid.WalkSpeed = 16
+        RealCharacter.Humanoid.JumpPower = 50
+        
+        if RealCharacter:FindFirstChild("HumanoidRootPart") then
+            RealCharacter.HumanoidRootPart.Anchored = false
+            
+            local bodyGyro = RealCharacter.HumanoidRootPart:FindFirstChild("BodyGyro")
+            if bodyGyro then
+                bodyGyro:Destroy()
+            end
+        end
+    end
+end
+
+local function AntiKick()
+    if AntiKickConnection then
+        AntiKickConnection:Disconnect()
+    end
+    
+    AntiKickConnection = RunService.Heartbeat:Connect(function()
+        if RealCharacter and RealCharacter:FindFirstChild("HumanoidRootPart") then
+            RealCharacter.HumanoidRootPart.CFrame = RealCharacter.HumanoidRootPart.CFrame
+        end
+    end)
+end
+
+local function OnRealCharacterDied()
+    CanToggle = false
+    IsInvisible = false
+    
+    if FakeCharacter then
+        FakeCharacter:Destroy()
+        FakeCharacter = nil
+    end
+    
+    if AntiKickConnection then
+        AntiKickConnection:Disconnect()
+        AntiKickConnection = nil
+    end
+
+    RealCharacter = Player.CharacterAdded:Wait()
+    task.wait(0.5)
+    CanToggle = true
+    RealCharacter.Humanoid.Died:Connect(OnRealCharacterDied)
+end
+
+local function ToggleInvisibility()
+    if not CanToggle or not RealCharacter or (not RealCharacter:IsDescendantOf(workspace) and not IsInvisible) then
+        return
+    end
+
+    IsInvisible = not IsInvisible
+    CanToggle = false
+
+    if IsInvisible then
+        OriginalPosition = RealCharacter:GetPrimaryPartCFrame()
+        OriginalCameraSubject = workspace.CurrentCamera.CameraSubject
+        
+        FakeCharacter = CloneCharacter()
+        
+        FakeCharacter.Humanoid.Died:Connect(function()
+            if IsInvisible then
+                ToggleInvisibility()
+            end
+        end)
+
+        MovePlayerHigh()
+        AntiKick()
+
+        FakeCharacter:SetPrimaryPartCFrame(OriginalPosition)
+        Player.Character = FakeCharacter
+        
+        if workspace.CurrentCamera.CameraSubject == RealCharacter.Humanoid then
+            workspace.CurrentCamera.CameraSubject = FakeCharacter.Humanoid
+        end
+
+        for _, descendant in ipairs(FakeCharacter:GetDescendants()) do
+            if descendant:IsA("LocalScript") then
+                descendant.Disabled = false
+            end
+        end
+
+    else
+        if not FakeCharacter then 
+            CanToggle = true
+            return 
+        end
+
+        local fakePosition = FakeCharacter:GetPrimaryPartCFrame()
+        
+        if AntiKickConnection then
+            AntiKickConnection:Disconnect()
+            AntiKickConnection = nil
+        end
+
+        RealCharacter.Parent = workspace
+        RealCharacter:SetPrimaryPartCFrame(fakePosition)
+        
+        RestorePlayerMovement()
+
+        Player.Character = RealCharacter
+        
+        if OriginalCameraSubject == RealCharacter.Humanoid then
+            workspace.CurrentCamera.CameraSubject = RealCharacter.Humanoid
+        end
+
+        FakeCharacter:Destroy()
+        FakeCharacter = nil
+    end
+
+    task.wait(0.2)
+    CanToggle = true
+end
+
+_G.ToggleInvisibility = ToggleInvisibility
+
+RealCharacter.Humanoid.Died:Connect(OnRealCharacterDied)

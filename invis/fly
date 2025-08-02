@@ -1,0 +1,341 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local camera = workspace.CurrentCamera
+
+local isR6 = false
+local flySpeed = 50
+local flying = false
+local bodyVelocity, bodyGyro
+local animations = {}
+local animTracks = {}
+local connections = {}
+
+local inputFlags = {
+    forward = false,
+    back = false,
+    left = false,
+    right = false,
+    up = false,
+    down = false
+}
+
+local function detectRig()
+    local rigType = humanoid.RigType
+    if rigType == Enum.HumanoidRigType.R6 then
+        isR6 = true
+        StarterGui:SetCore("SendNotification", {
+            Title = "Rig Type",
+            Text = "You are in R6 - Using R6 fly mode",
+            Duration = 3
+        })
+    else
+        isR6 = false
+        StarterGui:SetCore("SendNotification", {
+            Title = "Rig Type", 
+            Text = "You are in R15 - Using R15 fly mode",
+            Duration = 3
+        })
+    end
+end
+
+local function setupAnimations()
+    if isR6 then
+        animations = {
+            idle = "rbxassetid://180435571",
+            forward = "rbxassetid://180426354",
+            back = "rbxassetid://180435571",
+            left = "rbxassetid://180435571",
+            right = "rbxassetid://180435571",
+            up = "rbxassetid://180426354",
+            down = "rbxassetid://180435571"
+        }
+    else
+        animations = {
+            idle = "rbxassetid://10921144709",
+            forward = "rbxassetid://10921294559",
+            back = "rbxassetid://10921144709",
+            left = "rbxassetid://10921144709",
+            right = "rbxassetid://10921144709",
+            up = "rbxassetid://10921294559",
+            down = "rbxassetid://10921144709"
+        }
+    end
+    
+    for name, id in pairs(animations) do
+        local anim = Instance.new("Animation")
+        anim.AnimationId = id
+        animTracks[name] = humanoid:LoadAnimation(anim)
+        animTracks[name].Looped = true
+        animTracks[name].Priority = Enum.AnimationPriority.Action
+    end
+end
+
+local function stopAllAnims()
+    for _, track in pairs(animTracks) do
+        if track.IsPlaying then
+            track:Stop()
+        end
+    end
+end
+
+local function createMobileGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FlyMobileGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+    local function createButton(name, text, position, size)
+        local button = Instance.new("TextButton")
+        button.Name = name
+        button.Text = text
+        button.Size = size or UDim2.new(0, 80, 0, 80)
+        button.Position = position
+        button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        button.Font = Enum.Font.GothamBold
+        button.TextScaled = true
+        button.BackgroundTransparency = 0.3
+        button.BorderSizePixel = 0
+        button.Parent = screenGui
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = button
+        
+        return button
+    end
+    
+    local forwardBtn = createButton("Forward", "W", UDim2.new(0, 10, 1, -250))
+    local backBtn = createButton("Back", "S", UDim2.new(0, 10, 1, -160))
+    local leftBtn = createButton("Left", "A", UDim2.new(0, 100, 1, -160))
+    local rightBtn = createButton("Right", "D", UDim2.new(0, 190, 1, -160))
+    local upBtn = createButton("Up", "E", UDim2.new(1, -100, 1, -250))
+    local downBtn = createButton("Down", "Q", UDim2.new(1, -100, 1, -160))
+    
+    local function setupMobileButton(button, flag)
+        button.MouseButton1Down:Connect(function()
+            inputFlags[flag] = true
+            button.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        end)
+        
+        button.MouseButton1Up:Connect(function()
+            inputFlags[flag] = false
+            button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        end)
+        
+        button.TouchLongPress:Connect(function()
+            inputFlags[flag] = true
+            button.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+        end)
+    end
+    
+    setupMobileButton(forwardBtn, "forward")
+    setupMobileButton(backBtn, "back")
+    setupMobileButton(leftBtn, "left")
+    setupMobileButton(rightBtn, "right")
+    setupMobileButton(upBtn, "up")
+    setupMobileButton(downBtn, "down")
+    
+    return screenGui
+end
+
+local function setupFlyMechanics()
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(4000, 4000, 4000)
+    bodyGyro.D = 500
+    bodyGyro.P = 3000
+end
+
+local function startFlying()
+    if flying then return end
+    flying = true
+    
+    bodyVelocity.Parent = rootPart
+    bodyGyro.Parent = rootPart
+    
+    humanoid.PlatformStand = true
+    
+    if character:FindFirstChild("Animate") then
+        character.Animate.Enabled = false
+    end
+    
+    for _, state in pairs(Enum.HumanoidStateType:GetEnumItems()) do
+        if state ~= Enum.HumanoidStateType.None then
+            humanoid:SetStateEnabled(state, false)
+        end
+    end
+    
+    StarterGui:SetCore("SendNotification", {
+        Title = "Superman Fly",
+        Text = "Flying activated! Use WASD/Mobile controls",
+        Duration = 2
+    })
+end
+
+local function stopFlying()
+    if not flying then return end
+    flying = false
+    
+    if bodyVelocity then bodyVelocity.Parent = nil end
+    if bodyGyro then bodyGyro.Parent = nil end
+    
+    humanoid.PlatformStand = false
+    
+    if character:FindFirstChild("Animate") then
+        character.Animate.Enabled = true
+    end
+    
+    for _, state in pairs(Enum.HumanoidStateType:GetEnumItems()) do
+        if state ~= Enum.HumanoidStateType.None then
+            humanoid:SetStateEnabled(state, true)
+        end
+    end
+    
+    stopAllAnims()
+    
+    StarterGui:SetCore("SendNotification", {
+        Title = "Superman Fly",
+        Text = "Flying deactivated",
+        Duration = 2
+    })
+end
+
+local function setupInputs()
+    connections.inputBegan = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        local key = input.KeyCode
+        if key == Enum.KeyCode.W then inputFlags.forward = true
+        elseif key == Enum.KeyCode.S then inputFlags.back = true
+        elseif key == Enum.KeyCode.A then inputFlags.left = true
+        elseif key == Enum.KeyCode.D then inputFlags.right = true
+        elseif key == Enum.KeyCode.E then inputFlags.up = true
+        elseif key == Enum.KeyCode.Q then inputFlags.down = true
+        elseif key == Enum.KeyCode.F then
+            if flying then stopFlying() else startFlying() end
+        end
+    end)
+    
+    connections.inputEnded = UserInputService.InputEnded:Connect(function(input)
+        local key = input.KeyCode
+        if key == Enum.KeyCode.W then inputFlags.forward = false
+        elseif key == Enum.KeyCode.S then inputFlags.back = false
+        elseif key == Enum.KeyCode.A then inputFlags.left = false
+        elseif key == Enum.KeyCode.D then inputFlags.right = false
+        elseif key == Enum.KeyCode.E then inputFlags.up = false
+        elseif key == Enum.KeyCode.Q then inputFlags.down = false
+        end
+    end)
+end
+
+local function updateFly()
+    if not flying or not rootPart then return end
+    
+    local direction = Vector3.new(0, 0, 0)
+    local cameraCFrame = camera.CFrame
+    
+    if inputFlags.forward then direction = direction + cameraCFrame.LookVector end
+    if inputFlags.back then direction = direction - cameraCFrame.LookVector end
+    if inputFlags.left then direction = direction - cameraCFrame.RightVector end
+    if inputFlags.right then direction = direction + cameraCFrame.RightVector end
+    if inputFlags.up then direction = direction + Vector3.new(0, 1, 0) end
+    if inputFlags.down then direction = direction + Vector3.new(0, -1, 0) end
+    
+    if direction.Magnitude > 0 then
+        direction = direction.Unit
+        bodyVelocity.Velocity = direction * flySpeed
+        bodyGyro.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + direction)
+        
+        if inputFlags.forward then
+            if not animTracks.forward.IsPlaying then
+                stopAllAnims()
+                animTracks.forward:Play()
+            end
+        elseif inputFlags.up then
+            if not animTracks.up.IsPlaying then
+                stopAllAnims()
+                animTracks.up:Play()
+            end
+        else
+            if not animTracks.idle.IsPlaying then
+                stopAllAnims()
+                animTracks.idle:Play()
+            end
+        end
+    else
+        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        bodyGyro.CFrame = cameraCFrame
+        
+        if not animTracks.idle.IsPlaying then
+            stopAllAnims()
+            animTracks.idle:Play()
+        end
+    end
+end
+
+local function setupCharacter()
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    rootPart = character:WaitForChild("HumanoidRootPart")
+    
+    detectRig()
+    setupAnimations()
+    setupFlyMechanics()
+    
+    if flying then
+        flying = false
+        startFlying()
+    end
+end
+
+local function cleanup()
+    for _, connection in pairs(connections) do
+        if connection then connection:Disconnect() end
+    end
+    connections = {}
+    
+    if flying then stopFlying() end
+    
+    if player.PlayerGui:FindFirstChild("FlyMobileGUI") then
+        player.PlayerGui.FlyMobileGUI:Destroy()
+    end
+end
+
+if player.Character then
+    setupCharacter()
+end
+
+player.CharacterAdded:Connect(setupCharacter)
+
+setupInputs()
+
+if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+    createMobileGUI()
+end
+
+connections.heartbeat = RunService.Heartbeat:Connect(updateFly)
+
+player.CharacterRemoving:Connect(cleanup)
+game.Players.LocalPlayer.AncestryChanged:Connect(function()
+    if not game.Players.LocalPlayer.Parent then
+        cleanup()
+    end
+end)
+
+StarterGui:SetCore("SendNotification", {
+    Title = "Superman Fly Loaded",
+    Text = "Press F to toggle flying | WASD to move | E/Q for up/down",
+    Duration = 5
+})

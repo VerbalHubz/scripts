@@ -1,0 +1,480 @@
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local HRP = character:WaitForChild("HumanoidRootPart")
+local Camera = workspace.CurrentCamera
+local Mouse = player:GetMouse()
+
+local rigType = humanoid.RigType
+local isR15 = rigType == Enum.HumanoidRigType.R15
+local isR6 = rigType == Enum.HumanoidRigType.R6
+
+local flying = false
+local flySpeed = 50
+local savedSpeed = 50
+
+local supermanEnabled = false
+local supermanEquipped = false
+local supermanActivated = false
+
+local inputFlags = { forward = false, back = false, left = false, right = false, up = false, down = false }
+local forwardHold = 0
+
+local bodyVelocity, bodyGyro, flyPart, flyVelocity, flyTool
+local animations = {}
+local tracks = {}
+local supermanAnims = {}
+local supermanTracks = {}
+
+local function detectRig()
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    HRP = character:WaitForChild("HumanoidRootPart")
+    rigType = humanoid.RigType
+    isR15 = rigType == Enum.HumanoidRigType.R15
+    isR6 = rigType == Enum.HumanoidRigType.R6
+    
+    if isR6 then
+        StarterGui:SetCore("SendNotification", {
+            Title = "Rig Type",
+            Text = "You are in R6 - Using Advanced Fly",
+            Duration = 3
+        })
+    elseif isR15 then
+        StarterGui:SetCore("SendNotification", {
+            Title = "Rig Type",
+            Text = "You are in R15 - Using Superman Fly",
+            Duration = 3
+        })
+    end
+end
+
+local function createR6Animations()
+    local function newAnim(id)
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "rbxassetid://" .. id
+        return anim
+    end
+
+    animations = {
+        forward = newAnim(90872539),
+        up = newAnim(90872539),
+        right1 = newAnim(136801964),
+        right2 = newAnim(142495255),
+        left1 = newAnim(136801964),
+        left2 = newAnim(142495255),
+        flyLow1 = newAnim(97169019),
+        flyLow2 = newAnim(282574440),
+        flyFast = newAnim(282574440),
+        back1 = newAnim(136801964),
+        back2 = newAnim(106772613),
+        back3 = newAnim(42070810),
+        back4 = newAnim(214744412),
+        down = newAnim(233322916),
+        idle1 = newAnim(97171309)
+    }
+
+    tracks = {}
+    for name, anim in pairs(animations) do
+        tracks[name] = humanoid:LoadAnimation(anim)
+    end
+end
+
+local function createR15Animations()
+    supermanAnims.idle1 = Instance.new("Animation")
+    supermanAnims.idle1.AnimationId = "rbxassetid://10921144709"
+    supermanAnims.idle2 = Instance.new("Animation")
+    supermanAnims.idle2.AnimationId = "rbxassetid://10921132962"
+    supermanAnims.fly = Instance.new("Animation")
+    supermanAnims.fly.AnimationId = "rbxassetid://10921294559"
+
+    supermanTracks.idle1 = humanoid:LoadAnimation(supermanAnims.idle1)
+    supermanTracks.idle2 = humanoid:LoadAnimation(supermanAnims.idle2)
+    supermanTracks.fly = humanoid:LoadAnimation(supermanAnims.fly)
+    
+    supermanTracks.idle1.Priority = Enum.AnimationPriority.Action
+    supermanTracks.idle2.Priority = Enum.AnimationPriority.Action
+    supermanTracks.fly.Priority = Enum.AnimationPriority.Action
+    supermanTracks.idle1.Looped = true
+    supermanTracks.idle2.Looped = true
+    supermanTracks.fly.Looped = true
+end
+
+local function setupR6Fly()
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+end
+
+local function setupR15Superman()
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+    
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+end
+
+local function stopAllR6()
+    for _, track in pairs(tracks) do
+        if track then track:Stop() end
+    end
+end
+
+local function stopAllR15()
+    for _, track in pairs(supermanTracks) do
+        if track then track:Stop() end
+    end
+end
+
+local function startR6Fly()
+    flying = true
+    setupR6Fly()
+    forwardHold = 0
+    flySpeed = savedSpeed
+    bodyVelocity.Parent = HRP
+    bodyGyro.Parent = HRP
+    humanoid.PlatformStand = true
+end
+
+local function stopR6Fly()
+    flying = false
+    if bodyVelocity then bodyVelocity.Parent = nil end
+    if bodyGyro then bodyGyro.Parent = nil end
+    humanoid.PlatformStand = false
+    stopAllR6()
+    
+    for touch, connection in pairs(touchConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    touchConnections = {}
+    activeTouches = {}
+end
+
+local function startR15Superman()
+    supermanEnabled = true
+    setupR15Superman()
+    forwardHold = 0
+    flySpeed = savedSpeed
+    bodyVelocity.Parent = HRP
+    bodyGyro.Parent = HRP
+    humanoid.PlatformStand = true
+    
+    local Enums = Enum.HumanoidStateType:GetEnumItems()
+    table.remove(Enums, table.find(Enums, Enum.HumanoidStateType.None))
+    for i,v in pairs(Enums) do
+        humanoid:SetStateEnabled(v, false)
+    end
+    humanoid.AutoRotate = false
+    if character:FindFirstChild("Animate") then
+        character.Animate.Enabled = false
+    end
+end
+
+local function stopR15Superman()
+    supermanEnabled = false
+    if bodyVelocity then bodyVelocity.Parent = nil end
+    if bodyGyro then bodyGyro.Parent = nil end
+    humanoid.PlatformStand = false
+    stopAllR15()
+    
+    for touch, connection in pairs(touchConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    touchConnections = {}
+    activeTouches = {}
+    
+    local Enums = Enum.HumanoidStateType:GetEnumItems()
+    table.remove(Enums, table.find(Enums, Enum.HumanoidStateType.None))
+    for i,v in pairs(Enums) do
+        humanoid:SetStateEnabled(v, true)
+    end
+    humanoid.AutoRotate = true
+    HRP.Velocity = Vector3.new(0, 0, 0)
+    HRP.RotVelocity = Vector3.new(0, 0, 0)
+    if character:FindFirstChild("Animate") then
+        character.Animate.Enabled = true
+    end
+end
+
+local function toggleFly()
+    if not character or not character.Parent then
+        character = player.Character or player.CharacterAdded:Wait()
+        humanoid = character:WaitForChild("Humanoid")
+        HRP = character:WaitForChild("HumanoidRootPart")
+    end
+    
+    if isR6 then
+        if flying then
+            stopR6Fly()
+            _G.FlyState = false
+        else
+            startR6Fly()
+            _G.FlyState = true
+        end
+    elseif isR15 then
+        if supermanEnabled then
+            stopR15Superman()
+            _G.FlyState = false
+        else
+            startR15Superman()
+            _G.FlyState = true
+        end
+    end
+end
+
+_G.ToggleFly = toggleFly
+_G.FlyState = false
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.W then inputFlags.forward = true end
+    if input.KeyCode == Enum.KeyCode.S then inputFlags.back = true end
+    if input.KeyCode == Enum.KeyCode.A then inputFlags.left = true end
+    if input.KeyCode == Enum.KeyCode.D then inputFlags.right = true end
+    if input.KeyCode == Enum.KeyCode.E or input.KeyCode == Enum.KeyCode.Space then inputFlags.up = true end
+    if input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.LeftControl then inputFlags.down = true end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.W then inputFlags.forward = false end
+    if input.KeyCode == Enum.KeyCode.S then inputFlags.back = false end
+    if input.KeyCode == Enum.KeyCode.A then inputFlags.left = false end
+    if input.KeyCode == Enum.KeyCode.D then inputFlags.right = false end
+    if input.KeyCode == Enum.KeyCode.E or input.KeyCode == Enum.KeyCode.Space then inputFlags.up = false end
+    if input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.LeftControl then inputFlags.down = false end
+end)
+
+local touchConnections = {}
+local activeTouches = {}
+
+UserInputService.TouchStarted:Connect(function(touch, gameProcessed)
+    if gameProcessed or not (flying or supermanEnabled) then return end
+    
+    local touchPos = touch.Position
+    local screenSize = Camera.ViewportSize
+    activeTouches[touch] = true
+    
+    local function updateMovement()
+        if touchPos.X < screenSize.X * 0.25 then
+            inputFlags.left = true
+        elseif touchPos.X > screenSize.X * 0.75 then
+            inputFlags.right = true
+        end
+        
+        if touchPos.Y < screenSize.Y * 0.25 then
+            inputFlags.up = true
+        elseif touchPos.Y > screenSize.Y * 0.75 then
+            inputFlags.down = true
+        end
+        
+        if touchPos.X >= screenSize.X * 0.25 and touchPos.X <= screenSize.X * 0.75 then
+            if touchPos.Y >= screenSize.Y * 0.25 and touchPos.Y <= screenSize.Y * 0.75 then
+                inputFlags.forward = true
+            end
+        end
+    end
+    
+    updateMovement()
+    
+    touchConnections[touch] = UserInputService.TouchMoved:Connect(function(movedTouch, gameProcessedMoved)
+        if movedTouch == touch and not gameProcessedMoved and activeTouches[touch] then
+            touchPos = movedTouch.Position
+            
+            inputFlags.forward = false
+            inputFlags.back = false
+            inputFlags.left = false
+            inputFlags.right = false
+            inputFlags.up = false
+            inputFlags.down = false
+            
+            updateMovement()
+        end
+    end)
+end)
+
+UserInputService.TouchEnded:Connect(function(touch, gameProcessed)
+    if activeTouches[touch] then
+        activeTouches[touch] = nil
+        
+        if touchConnections[touch] then
+            touchConnections[touch]:Disconnect()
+            touchConnections[touch] = nil
+        end
+        
+        local hasActiveTouches = false
+        for _ in pairs(activeTouches) do
+            hasActiveTouches = true
+            break
+        end
+        
+        if not hasActiveTouches then
+            inputFlags.forward = false
+            inputFlags.back = false
+            inputFlags.left = false
+            inputFlags.right = false
+            inputFlags.up = false
+            inputFlags.down = false
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function(dt)
+    if isR6 and flying then
+        if not inputFlags.forward then forwardHold = 0 end
+
+        local dir = Vector3.zero
+        local camCF = Camera.CFrame
+
+        if inputFlags.forward then dir += camCF.LookVector end
+        if inputFlags.back then dir -= camCF.LookVector end
+        if inputFlags.left then dir -= camCF.RightVector end
+        if inputFlags.right then dir += camCF.RightVector end
+        if inputFlags.up then dir += Vector3.yAxis end
+        if inputFlags.down then dir -= Vector3.yAxis end
+
+        if dir.Magnitude > 0 then dir = dir.Unit end
+
+        bodyVelocity.Velocity = dir * flySpeed
+        bodyGyro.CFrame = camCF
+
+        if inputFlags.up then
+            if not tracks.up.IsPlaying then stopAllR6(); tracks.up:Play() end
+        elseif inputFlags.down then
+            if not tracks.down.IsPlaying then stopAllR6(); tracks.down:Play() end
+        elseif inputFlags.left then
+            if not tracks.left1.IsPlaying then
+                stopAllR6()
+                tracks.left1:Play(); tracks.left1.TimePosition = 2.0; tracks.left1:AdjustSpeed(0)
+                tracks.left2:Play(); tracks.left2.TimePosition = 0.5; tracks.left2:AdjustSpeed(0)
+            end
+        elseif inputFlags.right then
+            if not tracks.right1.IsPlaying then
+                stopAllR6()
+                tracks.right1:Play(); tracks.right1.TimePosition = 1.1; tracks.right1:AdjustSpeed(0)
+                tracks.right2:Play(); tracks.right2.TimePosition = 0.5; tracks.right2:AdjustSpeed(0)
+            end
+        elseif inputFlags.back then
+            if not tracks.back1.IsPlaying then
+                stopAllR6()
+                tracks.back1:Play(); tracks.back1.TimePosition = 5.3; tracks.back1:AdjustSpeed(0)
+                tracks.back2:Play(); tracks.back2:AdjustSpeed(0)
+                tracks.back3:Play(); tracks.back3.TimePosition = 0.8; tracks.back3:AdjustSpeed(0)
+                tracks.back4:Play(); tracks.back4.TimePosition = 1; tracks.back4:AdjustSpeed(0)
+            end
+        elseif inputFlags.forward then
+            forwardHold += dt
+            if forwardHold >= 3 then
+                if not tracks.flyFast.IsPlaying then
+                    stopAllR6()
+                    flySpeed = savedSpeed * 1.3
+                    tracks.flyFast:Play(); tracks.flyFast:AdjustSpeed(0.05)
+                end
+            else
+                if not tracks.flyLow1.IsPlaying then
+                    stopAllR6()
+                    flySpeed = savedSpeed
+                    tracks.flyLow1:Play()
+                    tracks.flyLow2:Play()
+                end
+            end
+        else
+            if not tracks.idle1.IsPlaying then
+                stopAllR6()
+                tracks.idle1:Play(); tracks.idle1:AdjustSpeed(0)
+            end
+        end
+    elseif isR15 and supermanEnabled and HRP then
+        if supermanEquipped then
+            task.spawn(function()
+                local Enums = Enum.HumanoidStateType:GetEnumItems()
+                table.remove(Enums, table.find(Enums, Enum.HumanoidStateType.None))
+                for i,v in pairs(Enums) do
+                    if humanoid.Health > 0 then
+                        humanoid:SetStateEnabled(v, false)
+                    else
+                        humanoid:SetStateEnabled(v, true)
+                    end
+                end
+            end)
+            humanoid.AutoRotate = false
+
+            HRP.CFrame = flyPart.CFrame
+            HRP.Velocity = Vector3.new(0, 0, 0)
+            HRP.RotVelocity = Vector3.new(0, 0, 0)
+            if character:FindFirstChild("Animate") then
+                character.Animate.Enabled = false
+            end
+
+            if not supermanActivated then
+                if not supermanTracks.idle1.IsPlaying then
+                    supermanTracks.idle1:Play()
+                    supermanTracks.idle2:Play()
+                    supermanTracks.idle2:AdjustWeight(0.5)
+                end
+                supermanTracks.fly:Stop()
+                flyVelocity.Velocity = Vector3.new(0, 0, 0)
+                local LookVector = flyPart.Position + Camera.CFrame.LookVector
+                local IdleCFrame = CFrame.lookAt(flyPart.Position, LookVector)
+                TweenService:Create(flyPart, TweenInfo.new(0.25), {
+                    CFrame = IdleCFrame
+                }):Play()
+            else
+                if not supermanTracks.fly.IsPlaying then
+                    supermanTracks.fly:Play(0.1)
+                    supermanTracks.fly:AdjustSpeed(0)
+                    supermanTracks.fly.TimePosition = 0.5
+                end
+                supermanTracks.idle1:Stop()
+                supermanTracks.idle2:Stop()
+                local LookVector = (Mouse.Hit.Position - Camera.CFrame.Position).Unit
+                local FlyCFrame = CFrame.lookAt(flyPart.Position, flyPart.Position + LookVector)*CFrame.Angles(math.rad(-65), 0, 0)
+                flyVelocity.Velocity = Vector3.new(0, 0, 0)
+                TweenService:Create(flyPart, TweenInfo.new(0.25), {
+                    CFrame = FlyCFrame + (LookVector * 5) * (savedSpeed / 16)
+                }):Play()
+            end
+        end
+    end
+end)
+
+local function onCharacterAdded()
+    detectRig()
+    if isR6 then
+        createR6Animations()
+    elseif isR15 then
+        createR15Animations()
+    end
+    
+    for touch, connection in pairs(touchConnections) do
+        if connection then
+            connection:Disconnect()
+        end
+    end
+    touchConnections = {}
+    activeTouches = {}
+    
+    flying = false
+    supermanEnabled = false
+    _G.FlyState = false
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+
+detectRig()
+if isR6 then
+    createR6Animations()
+elseif isR15 then
+    createR15Animations()
+end

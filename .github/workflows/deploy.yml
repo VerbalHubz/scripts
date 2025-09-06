@@ -1,0 +1,36 @@
+name: Obfuscate and Deploy
+
+on:
+  push:
+    branches:
+      - main 
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python (for Hercules)
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install Hercules
+        run: |
+          git clone https://github.com/Serpensin/hercules-obfuscator hercules
+          cd hercules
+          pip install -r requirements.txt || true
+
+      - name: Run Hercules Obfuscator
+        run: |
+          mkdir -p dist
+          for file in $(find src -name "*.lua"); do
+            echo "Obfuscating $file..."
+            python hercules/main.py "$file" -o "dist/$(basename $file)"
+          done
+
+      - name: Deploy to Vercel
+        run: npx vercel --token=${{ secrets.VERCEL_TOKEN }} --prod
